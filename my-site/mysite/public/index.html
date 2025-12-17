@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>SCLC 登錄</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <script src="config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/util.js"></script>
+</head>
+<body>
+  <div class="container">
+    <div class="card" style="max-width:560px;margin:40px auto;">
+      <div class="topbar">
+        <h1 id="title">登入</h1>
+        <span class="badge" id="badge" style="display:none;">已登入</span>
+      </div>
+
+      <label>工號（固定 6 碼，含 0 開頭）</label>
+      <input id="emp_no" autocomplete="off" inputmode="numeric" placeholder="例如：010613">
+
+      <label>通行碼（6 碼數字）</label>
+      <input id="password" class="fakePwd" type="text" autocomplete="off" placeholder="請輸入通行碼">
+
+      <button type="button" onclick="login()">登入</button>
+      <div id="msg" class="msg"></div>
+
+      <div class="row" style="margin-top:14px">
+        <div class="col">
+          <button class="ghost" type="button" onclick="openForgot()">忘記通行碼</button>
+        </div>
+        <div class="col">
+          <button class="ghost" type="button" onclick="openChange()">修改通行碼</button>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px">
+        <div class="col">
+          <button class="ghost" type="button" onclick="gotoCalendar()">進入排假月曆</button>
+        </div>
+        <div class="col">
+          <button class="danger" type="button" onclick="logout()">登出</button>
+        </div>
+      </div>
+
+      <div class="small" style="text-align:center;margin-top:12px">
+        ※ 7 天免登入：每次開頁會自動 ping 延長（以後端 session 規則為準）
+      </div>
+    </div>
+  </div>
+
+  <!-- Forgot Modal -->
+  <div class="modal" id="mForgot" onclick="maskClose(event,'mForgot')">
+    <div class="box">
+      <button class="x" onclick="closeModal('mForgot')">關閉</button>
+      <h2 style="margin:0 0 10px;font-size:18px">忘記通行碼</h2>
+      <label>工號（6 碼）</label>
+      <input id="forgot_emp" autocomplete="off" inputmode="numeric" placeholder="例如：010613">
+      <button onclick="sendForgot()">送出申請</button>
+      <div id="forgot_msg" class="msg"></div>
+      <div class="small">系統會建立重設記錄，請聯繫管理者取得臨時通行碼（6 碼）。</div>
+    </div>
+  </div>
+
+  <!-- Change Modal -->
+  <div class="modal" id="mChange" onclick="maskClose(event,'mChange')">
+    <div class="box">
+      <button class="x" onclick="closeModal('mChange')">關閉</button>
+      <h2 style="margin:0 0 10px;font-size:18px">修改通行碼</h2>
+      <div class="row">
+        <div class="col">
+          <label>舊通行碼（6碼）</label>
+          <input id="ch_old" class="fakePwd" type="text" autocomplete="off">
+        </div>
+        <div class="col">
+          <label>新通行碼（6碼）</label>
+          <input id="ch_new1" class="fakePwd" type="text" autocomplete="off">
+        </div>
+        <div class="col">
+          <label>再輸入一次</label>
+          <input id="ch_new2" class="fakePwd" type="text" autocomplete="off">
+        </div>
+      </div>
+      <button onclick="doChange()">確認修改</button>
+      <div id="change_msg" class="msg"></div>
+    </div>
+  </div>
+
+<script>
+  document.getElementById("title").textContent = (APP_CONFIG.APP_TITLE || "SCLC 排假系統") + "｜登入";
+
+  function openModal(id){ document.getElementById(id).classList.add("show"); }
+  function closeModal(id){ document.getElementById(id).classList.remove("show"); }
+  function maskClose(ev,id){ if(ev.target && ev.target.id===id) closeModal(id); }
+
+  async function boot(){
+    // 自動 ping（7天免登入）
+    const t = API.getToken();
+    if(!t) return;
+
+    const out = await API.callLogin("api_session_ping", [t]);
+    if(!out || !out.ok){
+      API.clearSession();
+      return;
+    }
+    API.saveSession(t, !!out.is_admin, out.expires_at);
+    document.getElementById("badge").style.display="";
+    setMsg("msg", "已登入（效期至：" + out.expires_at + "）", true);
+  }
+
+  async function login(){
+    let emp = normEmp(document.getElementById("emp_no").value);
+    const pw = document.getElementById("password").value.trim();
+    if(!emp || !pw) return setMsg("msg","請輸入工號與通行碼", false);
+
+    setMsg("msg","登入中…", true);
+    const out = await API.callLogin("api_login", [emp, pw]);
+    if(!out || !out.ok) return setMsg("msg", (out && (out.error||out.message)) || "登入失敗", false);
+
+    API.saveSession(out.session_token || out.token, !!out.is_admin, out.expires_at);
+    document.getElementById("badge").style.display="";
+    setMsg("msg","登入成功！效期至：" + (out.expires_at||""), true);
+  }
+
+  function logout(){
+    API.clearSession();
+    document.getElementById("badge").style.display="none";
+    setMsg("msg","已登出", true);
+  }
+
+  function gotoCalendar(){
+    window.location.href = "calendar.html";
+  }
+
+  function openForgot(){ openModal("mForgot"); setMsg("forgot_msg","",true); }
+  function openChange(){ openModal("mChange"); setMsg("change_msg","",true); }
+
+  async function sendForgot(){
+    let emp = normEmp(document.getElementById("forgot_emp").value);
+    if(!emp) return setMsg("forgot_msg","請輸入工號（6 碼）", false);
+    setMsg("forgot_msg","處理中…", true);
+    const out = await API.callLogin("api_forgot", [emp, navigator.userAgent]);
+    if(!out || !out.ok) return setMsg("forgot_msg", (out && (out.error||out.message)) || "提交失敗", false);
+    setMsg("forgot_msg", out.msg || "已提交。請聯繫管理者取得臨時通行碼（6碼）。", true);
+  }
+
+  async function doChange(){
+    const token = API.getToken();
+    if(!token) return setMsg("change_msg","尚未登入或 Session 失效，請先登入", false);
+    const oldPw = document.getElementById("ch_old").value.trim();
+    const n1 = document.getElementById("ch_new1").value.trim();
+    const n2 = document.getElementById("ch_new2").value.trim();
+    if(!oldPw || !n1 || !n2) return setMsg("change_msg","請把欄位都填完", false);
+    if(n1 !== n2) return setMsg("change_msg","兩次新通行碼不一致", false);
+    if(!/^\d{6}$/.test(n1)) return setMsg("change_msg","新通行碼需固定 6 碼數字", false);
+
+    setMsg("change_msg","處理中…", true);
+    const out = await API.callLogin("api_change_password", [token, oldPw, n1]);
+    if(!out || !out.ok) return setMsg("change_msg", (out && (out.error||out.message)) || "修改失敗", false);
+    setMsg("change_msg","修改完成！請用新通行碼重新登入確認。", true);
+  }
+
+  boot();
+</script>
+</body>
+</html>

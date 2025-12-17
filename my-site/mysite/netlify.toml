@@ -1,0 +1,9 @@
+[build]
+  publish = "public"
+
+# 單頁也能用（目前是多頁，保留不影響）
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+  force = false

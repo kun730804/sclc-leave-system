@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>SCLC 排假月曆</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <script src="config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/util.js"></script>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <div class="topbar">
+        <div>
+          <h1 id="title">排假月曆</h1>
+          <div class="small" id="sub">—</div>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <span class="badge" id="roleBadge">—</span>
+          <button class="ghost" onclick="backToLogin()">回登入</button>
+          <button class="danger" onclick="logout()">登出</button>
+        </div>
+      </div>
+
+      <div class="row" style="align-items:flex-end;">
+        <div class="col" style="max-width:240px">
+          <label>月份</label>
+          <input id="ym" type="month"/>
+        </div>
+        <div class="col" style="max-width:240px">
+          <button onclick="reloadMonth()">載入</button>
+        </div>
+        <div class="col">
+          <div class="small">
+            點一天：可查看同組名單 / 你自己的請假 / 新增 / 取消
+          </div>
+        </div>
+      </div>
+
+      <div class="calHead" id="calHead"></div>
+      <div class="cal" id="cal"></div>
+    </div>
+  </div>
+
+  <!-- Day Modal -->
+  <div class="modal" id="mDay" onclick="maskClose(event,'mDay')">
+    <div class="box">
+      <button class="x" onclick="closeModal('mDay')">關閉</button>
+      <h2 style="margin:0 0 6px;font-size:18px" id="dayTitle">—</h2>
+      <div class="small" id="dayMeta">—</div>
+
+      <div class="row" style="margin-top:10px">
+        <div class="col">
+          <div class="card" style="box-shadow:none">
+            <div class="topbar">
+              <div><b>我的請假</b></div>
+              <span class="small" id="myLeaveTag">—</span>
+            </div>
+
+            <div id="myLeaveActions" class="row" style="margin-top:8px"></div>
+
+            <div id="createBox" style="margin-top:10px">
+              <label>假別</label>
+              <select id="leaveType"></select>
+
+              <div class="row">
+                <div class="col">
+                  <label>時間模式</label>
+                  <select id="timeMode" onchange="toggleTimeMode()">
+                    <option value="SLOT">SLOT（全日/上午/下午）</option>
+                    <option value="CUSTOM">CUSTOM（自訂時間）</option>
+                  </select>
+                </div>
+                <div class="col" id="slotBox">
+                  <label>時段</label>
+                  <select id="slot">
+                    <option value="FULL">FULL（全日）</option>
+                    <option value="AM">AM（上午）</option>
+                    <option value="PM">PM（下午）</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="row" id="customBox" style="display:none">
+                <div class="col">
+                  <label>開始時間</label>
+                  <input id="tStart" placeholder="08:00"/>
+                </div>
+                <div class="col">
+                  <label>結束時間</label>
+                  <input id="tEnd" placeholder="17:00"/>
+                </div>
+              </div>
+
+              <label>備註</label>
+              <textarea id="note" placeholder="可選填"></textarea>
+
+              <button onclick="createLeave()">送出新增</button>
+              <div id="dayMsg" class="msg"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="col">
+          <div class="card" style="box-shadow:none">
+            <b>同組當日名單（已核准）</b>
+            <div class="small" style="margin-top:6px">（含假別與時段）</div>
+            <table>
+              <thead><tr><th>工號</th><th>姓名</th><th>假別</th><th>時段</th></tr></thead>
+              <tbody id="teamTbody"><tr><td colspan="4" class="small">載入中…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+<script>
+  const head = document.getElementById("calHead");
+  head.innerHTML = ["日","一","二","三","四","五","六"].map(x=>`<div>${x}</div>`).join("");
+
+  function openModal(id){ document.getElementById(id).classList.add("show"); }
+  function closeModal(id){ document.getElementById(id).classList.remove("show"); }
+  function maskClose(ev,id){ if(ev.target && ev.target.id===id) closeModal(id); }
+
+  function backToLogin(){ window.location.href="index.html"; }
+  function logout(){ API.clearSession(); window.location.href="index.html"; }
+
+  let gEmp = null;
+  let gDays = [];
+  let gLeaveTypes = [];
+  let gSelectedDate = "";
+
+  function setRoleBadge(){
+    const isAdmin = localStorage.getItem(APP_CONFIG.LS_ADMIN) === "1";
+    document.getElementById("roleBadge").textContent = isAdmin ? "Admin" : "User";
+  }
+
+  async function boot(){
+    document.getElementById("title").textContent = (APP_CONFIG.APP_TITLE || "SCLC 排假系統") + "｜月曆";
+    setRoleBadge();
+
+    const token = API.getToken();
+    if(!token) return window.location.href="index.html";
+
+    // 先 ping，確認 token 有效
+    const ping = await API.callLogin("api_session_ping", [token]);
+    if(!ping || !ping.ok){
+      API.clearSession();
+      return window.location.href="index.html";
+    }
+    API.saveSession(token, !!ping.is_admin, ping.expires_at);
+    setRoleBadge();
+
+    // 讀自己的員工資料
+    const me = await API.callDB("api_me", [token]);
+    if(!me || !me.ok){
+      setMsg("sub", (me && (me.message||me.error)) || "讀取使用者資料失敗", false);
+      return;
+    }
+    gEmp = me.emp;
+    document.getElementById("sub").textContent = `工號 ${gEmp.emp_id}｜${gEmp.name_zh}｜Team ${gEmp.team}｜Shift ${gEmp.shift}`;
+
+    // 假別字典
+    const lt = await API.callDB("api_leave_types", [token]);
+    gLeaveTypes = (lt && lt.ok && lt.list) ? lt.list : [];
+    fillLeaveTypes();
+
+    // 預設當月
+    const now = new Date();
+    document.getElementById("ym").value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    await reloadMonth();
+  }
+
+  function fillLeaveTypes(){
+    const sel = document.getElementById("leaveType");
+    if(!sel) return;
+    sel.innerHTML = "";
+    (gLeaveTypes||[]).forEach(t=>{
+      // employee_can_apply / supervisor_only 的邏輯已在後端，但這裡也做基本展示
+      const opt = document.createElement("option");
+      opt.value = t.leave_type;
+      opt.textContent = `${t.leave_name_zh || t.leave_type}（${t.leave_type}）`;
+      sel.appendChild(opt);
+    });
+  }
+
+  function toggleTimeMode(){
+    const tm = document.getElementById("timeMode").value;
+    document.getElementById("slotBox").style.display = (tm==="SLOT") ? "" : "none";
+    document.getElementById("customBox").style.display = (tm==="CUSTOM") ? "" : "none";
+  }
+
+  async function reloadMonth(){
+    const token = API.getToken();
+    const ymv = document.getElementById("ym").value;
+    if(!ymv) return;
+    const [y,m] = ymv.split("-").map(Number);
+
+    const out = await API.callDB("api_emp_calendar_month", [token, y, m]);
+    if(!out || !out.ok){
+      alert((out && (out.message||out.error)) || "載入月曆失敗");
+      return;
+    }
+    gEmp = out.emp || gEmp;
+    gDays = out.days || [];
+    renderCalendar(y,m);
+  }
+
+  function renderCalendar(year, month){
+    const cal = document.getElementById("cal");
+    cal.innerHTML = "";
+
+    const first = new Date(year, month-1, 1);
+    const startDow = first.getDay();
+    const daysInMonth = new Date(year, month, 0).getDate();
+
+    // 補空格
+    for(let i=0;i<startDow;i++){
+      const blank = document.createElement("div");
+      blank.style.opacity = "0";
+      cal.appendChild(blank);
+    }
+
+    for(let day=1; day<=daysInMonth; day++){
+      const date = ymd(new Date(year, month-1, day));
+      const info = (gDays||[]).find(x=>x.date===date) || { date, is_workday:true, myLeave:null, annual_used:0, annual_limit:0 };
+
+      const el = document.createElement("div");
+      el.className = "day" + (info.is_workday ? "" : " off");
+      el.innerHTML = `
+        <div class="d">${day} <span class="small">(${dowZh(new Date(year,month-1,day).getDay())})</span></div>
+        <div class="tag">${info.myLeave ? `<span class="pill">${escapeHtml(info.myLeave.leave_name_zh)}</span> <span class="small">${escapeHtml(info.myLeave.time_label||"")}</span>` : `<span class="small">（無請假）</span>`}</div>
+        <div class="q">特休：${info.annual_used||0}/${info.annual_limit||0}</div>
+      `;
+      el.onclick = ()=>openDay(date, info);
+      cal.appendChild(el);
+    }
+  }
+
+  function escapeHtml(s){
+    return String(s||"").replace(/[&<>"']/g, m=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
+  }
+
+  async function openDay(date, info){
+    gSelectedDate = date;
+    document.getElementById("dayTitle").textContent = `${date}`;
+    document.getElementById("dayMeta").textContent = `班別：${gEmp.shift}｜Team：${gEmp.team}｜工作日：${info.is_workday ? "是" : "否"}｜特休：${info.annual_used||0}/${info.annual_limit||0}`;
+
+    // 我的請假狀態
+    const my = info.myLeave;
+    document.getElementById("myLeaveTag").textContent = my ? `${my.leave_name_zh} ${my.time_label||""}` : "（無）";
+    const act = document.getElementById("myLeaveActions");
+    act.innerHTML = "";
+    if(my){
+      const btnCancel = document.createElement("button");
+      btnCancel.className = "danger";
+      btnCancel.textContent = "取消我的請假";
+      btnCancel.onclick = ()=>cancelLeave(my.request_id);
+      act.appendChild(btnCancel);
+      document.getElementById("createBox").style.display = "none";
+    }else{
+      document.getElementById("createBox").style.display = "";
+      setMsg("dayMsg","",true);
+    }
+
+    // 同組名單
+    document.getElementById("teamTbody").innerHTML = `<tr><td colspan="4" class="small">載入中…</td></tr>`;
+    openModal("mDay");
+
+    const token = API.getToken();
+    const out = await API.callDB("api_emp_day_details", [token, date]);
+    if(!out || !out.ok){
+      document.getElementById("teamTbody").innerHTML = `<tr><td colspan="4" class="small">載入失敗：${escapeHtml((out && (out.message||out.error)) || "unknown")}</td></tr>`;
+      return;
+    }
+    const list = out.list || [];
+    if(!list.length){
+      document.getElementById("teamTbody").innerHTML = `<tr><td colspan="4" class="small">（無資料）</td></tr>`;
+      return;
+    }
+    document.getElementById("teamTbody").innerHTML = list.map(x=>`
+      <tr>
+        <td>${escapeHtml(x.emp_id)}</td>
+        <td>${escapeHtml(x.name_zh)}</td>
+        <td>${escapeHtml(x.leave_name_zh)}</td>
+        <td>${escapeHtml(x.time_label||"")}</td>
+      </tr>
+    `).join("");
+  }
+
+  async function createLeave(){
+    const token = API.getToken();
+    const leave_type = document.getElementById("leaveType").value;
+    const time_mode = document.getElementById("timeMode").value;
+    const payload = { date: gSelectedDate, leave_type, time_mode, note: document.getElementById("note").value || "" };
+
+    if(time_mode === "SLOT"){
+      payload.slot = document.getElementById("slot").value;
+    }else{
+      payload.leave_start_time = document.getElementById("tStart").value.trim();
+      payload.leave_end_time = document.getElementById("tEnd").value.trim();
+    }
+
+    setMsg("dayMsg","送出中…", true);
+    const out = await API.callDB("api_emp_create_leave", [token, payload]);
+    if(!out || !out.ok){
+      setMsg("dayMsg", (out && (out.message||out.error)) || "新增失敗", false);
+      return;
+    }
+    setMsg("dayMsg","新增成功！request_id=" + out.request_id, true);
+    await reloadMonth();
+    closeModal("mDay");
+  }
+
+  async function cancelLeave(requestId){
+    if(!confirm("確定要取消？")) return;
+    const token = API.getToken();
+    setMsg("dayMsg","取消中…", true);
+    const out = await API.callDB("api_emp_cancel_leave", [token, requestId]);
+    if(!out || !out.ok){
+      setMsg("dayMsg", (out && (out.message||out.error)) || "取消失敗", false);
+      return;
+    }
+    setMsg("dayMsg","已取消", true);
+    await reloadMonth();
+    closeModal("mDay");
+  }
+
+  boot();
+</script>
+</body>
+</html>
