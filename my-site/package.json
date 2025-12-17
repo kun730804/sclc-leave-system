@@ -1,0 +1,9 @@
+{
+  "name": "sclc-leave-system",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "googleapis": "^140.0.0",
+    "google-auth-library": "^9.0.0"
+  }
+}
