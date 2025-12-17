@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的網頁首頁</title>
+    <style>
+        /* 這裡是網頁的樣式設定 (CSS) */
+        body {
+            font-family: "Microsoft JhengHei", "微軟正黑體", Arial, sans-serif;
+            background-color: #f4f4f4;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            text-align: center;
+            max-width: 500px;
+            width: 90%;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        p {
+            color: #666;
+            margin-bottom: 30px;
+        }
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 15px 0;
+            margin: 10px 0;
+            background-color: #007bff; /* 按鈕顏色 */
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-size: 18px;
+            font-weight: bold;
+            transition: background 0.3s;
+        }
+        .btn:hover {
+            background-color: #0056b3; /* 滑鼠移上去的顏色 */
+        }
+        .btn-secondary {
+            background-color: #28a745; /* 第二個按鈕顏色 (綠色) */
+        }
+        .btn-secondary:hover {
+            background-color: #218838;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>歡迎來到我的網站</h1>
+        <p>請點擊下方按鈕以瀏覽我的專案：</p>
+
+        <a href="pallet_3D_2.0.html" class="btn">
+            📦 開啟 Pallet 3D 2.0
+        </a>
+
+        <a href="空間規劃v7.html" class="btn btn-secondary">
+            🏠 開啟 空間規劃 v7
+        </a>
+    </div>
+
+</body>
+</html>

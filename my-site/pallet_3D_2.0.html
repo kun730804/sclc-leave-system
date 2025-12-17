@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>3D 棧板堆疊模擬器 V2.0 (智慧演算版)</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: "微軟正黑體", sans-serif; }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+            pointer-events: auto;
+            width: 260px;
+            border: 1px solid #e0e0e0;
+        }
+        input, button { font-size: 14px; margin: 5px 0; padding: 6px; width: 100%; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+        label { font-size: 12px; font-weight: bold; display: block; margin-top: 8px; color: #444; }
+        h3 { margin: 0 0 15px 0; border-bottom: 2px solid #2196F3; padding-bottom: 8px; color: #1976D2; font-size: 18px; }
+        .group { background: #f9f9f9; padding: 8px; margin-bottom: 8px; border-radius: 6px; border: 1px solid #eee; }
+        
+        .stat-box {
+            background: #E3F2FD;
+            padding: 8px;
+            border-radius: 4px;
+            font-size: 13px;
+            color: #0D47A1;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+
+        .signature {
+            margin-top: 20px;
+            padding-top: 10px;
+            border-top: 1px solid #ddd;
+            text-align: right;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 12px;
+            color: #888;
+            font-style: italic;
+        }
+        .signature span { color: #333; font-weight: bold; }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div id="info">
+        <h3>📦 智慧堆疊 V2.0</h3>
+        
+        <div class="group">
+            <label>棧板 (長x寬x高)</label>
+            <div style="display:flex; gap:5px;">
+                <input type="number" id="pL" value="120" placeholder="長">
+                <input type="number" id="pW" value="100" placeholder="寬">
+                <input type="number" id="pH" value="20" placeholder="高">
+            </div>
+        </div>
+
+        <div class="group">
+            <label>紙箱 (長x寬x高)</label>
+            <div style="display:flex; gap:5px;">
+                <input type="number" id="bL" value="58" placeholder="長">
+                <input type="number" id="bW" value="33" placeholder="寬">
+                <input type="number" id="bH" value="45" placeholder="高">
+            </div>
+        </div>
+
+        <label>堆疊層數: <span id="layerVal" style="color:#2196F3">1</span></label>
+        <input type="range" id="layers" min="1" max="10" value="1" oninput="layerVal.innerText = this.value">
+        
+        <button id="renderBtn" style="background:#2196F3; color:white; font-weight:bold; cursor:pointer; margin-top:10px; border:none;">開始最佳化計算</button>
+        
+        <div id="resultStat" class="stat-box">
+            單層數量: 計算中...<br>
+            總數量: -
+        </div>
+
+        <div class="signature">
+            Designed by <span>kun.shen</span>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- 場景初始化 ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xf0f2f5);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 10000);
+        camera.position.set(250, 300, 350);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(100, 250, 100);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        scene.add(dirLight);
+
+        let meshes = [];
+
+        function clearScene() {
+            meshes.forEach(m => scene.remove(m));
+            meshes = [];
+        }
+
+        // 建立方塊
+        function createBox(w, h, d, x, y, z, color, isWireframe = false) {
+            const geometry = new THREE.BoxGeometry(w, h, d);
+            const material = new THREE.MeshStandardMaterial({ 
+                color: color, 
+                roughness: 0.6,
+                metalness: 0.1
+            });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(x, y, z);
+            mesh.castShadow = !isWireframe;
+            mesh.receiveShadow = true;
+            scene.add(mesh);
+            meshes.push(mesh);
+
+            if (!isWireframe) {
+                const edges = new THREE.EdgesGeometry(geometry);
+                const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.2 }));
+                line.position.set(x, y, z);
+                scene.add(line);
+                meshes.push(line);
+            }
+        }
+
+        // --- 核心演算法：遞迴填充 ---
+        // 這是一個簡化的 Heuristic 算法，嘗試 "主區塊" + "剩餘邊緣填補"
+        function solveLayout(palletL, palletW, boxL, boxW) {
+            
+            // 策略 A: 正常方向填充 + 剩餘空間旋轉填充
+            const resA = calculateBlock(palletL, palletW, boxL, boxW);
+            
+            // 策略 B: 旋轉方向填充 + 剩餘空間旋轉填充
+            // 注意：這裡我們交換了輸入的 boxL 和 boxW，模擬一開始就旋轉
+            const resB = calculateBlock(palletL, palletW, boxW, boxL);
+
+            // 回傳數量較多的那個方案
+            if (resB.count > resA.count) {
+                return { boxes: resB.boxes, count: resB.count };
+            } else {
+                return { boxes: resA.boxes, count: resA.count };
+            }
+        }
+
+        function calculateBlock(spaceL, spaceW, bL, bW) {
+            let boxes = [];
+            
+            // 1. 計算主區塊 (Main Block) 能放多少
+            const cols = Math.floor(spaceL / bL);
+            const rows = Math.floor(spaceW / bW);
+            
+            // 記錄主區塊的箱子
+            for (let i = 0; i < cols; i++) {
+                for (let j = 0; j < rows; j++) {
+                    boxes.push({
+                        x: i * bL,
+                        z: j * bW,
+                        w: bL, // 在 Three.js 中，這裡對應 X 軸長度
+                        d: bW, // 在 Three.js 中，這裡對應 Z 軸長度
+                        rotated: false
+                    });
+                }
+            }
+
+            // 2. 計算剩餘空間 (Gaps)
+            const usedL = cols * bL;
+            const usedW = rows * bW;
+            const remainL = spaceL - usedL; // 右邊剩下的寬度
+            const remainW = spaceW - usedW; // 下面剩下的長度
+
+            // 3. 嘗試填補右邊 (Right Strip) - 這裡我們嘗試旋轉箱子來塞
+            // 右邊區域大小: 寬=remainL, 長=spaceW (全高) 或是 usedW? 通常填 usedW 比較整齊
+            if (remainL > 0) {
+                // 嘗試塞入轉向的箱子 (bW x bL)
+                // 這裡空間寬度是 remainL，我們看能塞幾個 bW (箱寬)
+                const fillCols = Math.floor(remainL / bW);
+                const fillRows = Math.floor(spaceW / bL); // 高度方向看能塞幾個 bL (箱長)
+
+                for (let i = 0; i < fillCols; i++) {
+                    for (let j = 0; j < fillRows; j++) {
+                        boxes.push({
+                            x: usedL + (i * bW),
+                            z: j * bL,
+                            w: bW, // 旋轉後，X軸佔用寬度
+                            d: bL, // 旋轉後，Z軸佔用長度
+                            rotated: true
+                        });
+                    }
+                }
+            }
+
+            // 4. 嘗試填補下方 (Bottom Strip) - 如果右邊沒填滿整個高度，或者右邊填完還有下面
+            // 這裡簡化邏輯：只針對主區塊下方的空間進行填補，避免與右邊重疊
+            if (remainW > 0) {
+                // 空間區域: 寬=usedL (主區塊寬度), 長=remainW
+                // 嘗試塞入轉向的箱子
+                const fillCols = Math.floor(usedL / bW); 
+                const fillRows = Math.floor(remainW / bL);
+
+                for (let i = 0; i < fillCols; i++) {
+                    for (let j = 0; j < fillRows; j++) {
+                        boxes.push({
+                            x: i * bW,
+                            z: usedW + (j * bL),
+                            w: bW,
+                            d: bL,
+                            rotated: true
+                        });
+                    }
+                }
+            }
+            
+            return { boxes: boxes, count: boxes.length };
+        }
+
+
+        // --- 主要執行 ---
+        function generateStack() {
+            clearScene();
+
+            const pL = parseFloat(document.getElementById('pL').value);
+            const pW = parseFloat(document.getElementById('pW').value);
+            const pH = parseFloat(document.getElementById('pH').value);
+            
+            const bL = parseFloat(document.getElementById('bL').value);
+            const bW = parseFloat(document.getElementById('bW').value);
+            const bH = parseFloat(document.getElementById('bH').value);
+            
+            const layers = parseInt(document.getElementById('layers').value);
+
+            // 畫棧板
+            createBox(pL, pH, pW, 0, pH/2, 0, 0x8D6E63);
+
+            // 計算最佳單層排列
+            // 注意：我們傳入的參數順序要是邏輯上的 (容器長, 容器寬, 物件長, 物件寬)
+            const layout = solveLayout(pL, pW, bL, bW);
+
+            // 計算整個層的置中偏移量
+            // 找出所有箱子的最大邊界
+            let maxX = 0;
+            let maxZ = 0;
+            layout.boxes.forEach(b => {
+                if(b.x + b.w > maxX) maxX = b.x + b.w;
+                if(b.z + b.d > maxZ) maxZ = b.z + b.d;
+            });
+            
+            // 置中 Offset
+            const offX = - (pL / 2);
+            const offZ = - (pW / 2);
+            // 讓箱子群組在棧板中間
+            const groupOffX = (pL - maxX) / 2;
+            const groupOffZ = (pW - maxZ) / 2;
+
+            // 開始堆疊
+            for (let l = 0; l < layers; l++) {
+                const layerY = pH + (l * bH) + (bH / 2); // 中心點Y
+
+                layout.boxes.forEach(box => {
+                    // 計算實際世界座標
+                    // box.x 是相對於 (0,0) 的，需要加上各種 Offset
+                    // 還有，BoxGeometry 的中心點是在物體中心，所以要加上 寬度/2
+                    
+                    const finalX = offX + groupOffX + box.x + (box.w / 2);
+                    const finalZ = offZ + groupOffZ + box.z + (box.d / 2);
+
+                    // 為了視覺區分，旋轉過的箱子給稍微不同的顏色
+                    const color = box.rotated ? 0xEF9A9A : 0xD2B48C;
+                    
+                    createBox(box.w, bH, box.d, finalX, layerY, finalZ, color);
+                });
+            }
+
+            // 更新統計資訊
+            const oneLayerCount = layout.count;
+            const totalCount = oneLayerCount * layers;
+            document.getElementById('resultStat').innerHTML = 
+                `單層數量: ${oneLayerCount} 箱<br>` +
+                `總計數量: <span style="color:#D32F2F; font-size:16px;">${totalCount}</span> 箱`;
+        }
+
+        document.getElementById('renderBtn').addEventListener('click', generateStack);
+        
+        // Init
+        generateStack();
+
+        // Animation
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>

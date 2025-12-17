@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>空間規劃 V7 (文字存取版)</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Microsoft JhengHei', Arial, sans-serif; background: #222; }
+        
+        /* --- UI: 彈窗通用樣式 --- */
+        .overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85); z-index: 2000;
+            display: flex; justify-content: center; align-items: center;
+        }
+        .modal-box {
+            background: #fff; padding: 25px; border-radius: 8px; width: 450px;
+            box-shadow: 0 0 25px rgba(0,0,0,0.8); position: relative;
+        }
+        .modal-box h2 { margin-top: 0; color: #333; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }
+        .close-btn {
+            position: absolute; top: 15px; right: 20px; font-size: 24px; cursor: pointer; color: #999;
+        }
+        .close-btn:hover { color: #333; }
+
+        /* 輸入框樣式 */
+        .input-row { display: flex; gap: 10px; margin-bottom: 15px; }
+        .input-group { flex: 1; }
+        label { display: block; font-size: 12px; margin-bottom: 5px; color: #555; }
+        input[type="number"] { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;}
+        
+        textarea {
+            width: 100%; height: 200px; padding: 10px; box-sizing: border-box;
+            border: 1px solid #ccc; border-radius: 4px; font-family: monospace; font-size: 12px; resize: none;
+        }
+
+        /* 按鈕樣式 */
+        .action-btn {
+            background: #4CAF50; color: white; border: none; padding: 12px;
+            font-size: 16px; border-radius: 4px; cursor: pointer; width: 100%; margin-top: 15px; font-weight: bold;
+        }
+        .action-btn.secondary { background: #2196F3; margin-top: 10px; }
+        .action-btn:hover { opacity: 0.9; }
+
+        /* --- UI: 工具列 --- */
+        #toolbar {
+            position: absolute; top: 0; left: 0; width: 100%;
+            background: #fff; padding: 10px 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1); display: flex; gap: 10px; align-items: center;
+            z-index: 100;
+        }
+        .tool-btn {
+            background: #f8f8f8; border: 1px solid #ccc; padding: 6px 15px; cursor: pointer; border-radius: 4px; font-size: 14px;
+        }
+        .tool-btn:hover { background: #e0e0e0; }
+        .divider { border-left: 1px solid #ddd; height: 20px; margin: 0 5px; }
+        
+        #status { font-size: 12px; color: #666; margin-left: auto; font-weight: bold;}
+    </style>
+    
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div id="wizard-overlay" class="overlay">
+        <div class="modal-box">
+            <h2>📐 空間設定 (L型)</h2>
+            <div class="input-row">
+                <div class="input-group"><label>區域A 寬(cm)</label><input type="number" id="w1" value="360"></div>
+                <div class="input-group"><label>區域A 長(cm)</label><input type="number" id="l1" value="592"></div>
+            </div>
+            <div class="input-row">
+                <div class="input-group"><label>區域B 寬(cm)</label><input type="number" id="w2" value="267"></div>
+                <div class="input-group"><label>區域B 長(cm)</label><input type="number" id="l2" value="487"></div>
+            </div>
+            <button class="action-btn" onclick="startPlanner()">建立空間</button>
+        </div>
+    </div>
+
+    <div id="code-modal" class="overlay" style="display:none;">
+        <div class="modal-box">
+            <span class="close-btn" onclick="closeCodeModal()">×</span>
+            <h2 id="modal-title">設計代碼</h2>
+            <p style="font-size:12px; color:#666;">複製此代碼保存，或貼上代碼還原設計。</p>
+            <textarea id="code-area"></textarea>
+            <button id="copy-btn" class="action-btn" onclick="copyCode()">複製代碼 (Copy)</button>
+            <button id="load-btn" class="action-btn secondary" onclick="loadFromText()">讀取並還原 (Load)</button>
+        </div>
+    </div>
+
+    <div id="toolbar">
+        <strong>Space V7</strong>
+        <div class="divider"></div>
+        <button class="tool-btn" onclick="saveSceneFile()">💾 下載檔案</button>
+        <button class="tool-btn" onclick="document.getElementById('file-input').click()">📂 讀取檔案</button>
+        <div class="divider"></div>
+        <button class="tool-btn" onclick="showExportModal()" style="color:#007bff">📋 匯出代碼</button>
+        <button class="tool-btn" onclick="showImportModal()" style="color:#007bff">📥 匯入代碼</button>
+        
+        <div id="status">準備就緒</div>
+        <input type="file" id="file-input" accept=".json" style="display:none">
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { TransformControls } from 'three/addons/controls/TransformControls.js';
+        import GUI from 'three/addons/libs/lil-gui.module.min.js';
+
+        let scene, camera, renderer, orbit, transformControl;
+        let wallsGroup, furnitureGroup;
+        let raycaster, pointer;
+        let selectedObject = null;
+        let gui, guiFolder;
+
+        const WALL_H = 240;
+        const WALL_THICK = 10;
+        const SNAP_THRESHOLD = 15;
+
+        // 全域函數掛載 (讓HTML按鈕呼叫)
+        window.startPlanner = startPlanner;
+        window.saveSceneFile = saveSceneFile;
+        window.closeCodeModal = closeCodeModal;
+        window.showExportModal = showExportModal;
+        window.showImportModal = showImportModal;
+        window.copyCode = copyCode;
+        window.loadFromText = loadFromText;
+
+        document.getElementById('file-input').addEventListener('change', loadFromFile);
+
+        // --- 啟動 ---
+        function startPlanner() {
+            const w1 = parseFloat(document.getElementById('w1').value);
+            const l1 = parseFloat(document.getElementById('l1').value);
+            const w2 = parseFloat(document.getElementById('w2').value);
+            const l2 = parseFloat(document.getElementById('l2').value);
+            
+            initScene();
+            buildLShapeRoom(w1, l1, w2, l2);
+            document.getElementById('wizard-overlay').style.display = 'none';
+        }
+
+        function initScene() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xe0e0e0);
+            
+            scene.add(new THREE.GridHelper(3000, 30, 0xbbbbbb, 0xeeeeee));
+
+            wallsGroup = new THREE.Group();
+            furnitureGroup = new THREE.Group();
+            scene.add(wallsGroup);
+            scene.add(furnitureGroup);
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 10000);
+            camera.position.set(0, 1500, 1500);
+            camera.lookAt(0, 0, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+            const dir = new THREE.DirectionalLight(0xffffff, 0.7);
+            dir.position.set(500, 1500, 500);
+            dir.castShadow = true;
+            dir.shadow.mapSize.set(2048, 2048);
+            scene.add(dir);
+
+            orbit = new OrbitControls(camera, renderer.domElement);
+            transformControl = new TransformControls(camera, renderer.domElement);
+            transformControl.addEventListener('dragging-changed', (e) => orbit.enabled = !e.value);
+            transformControl.addEventListener('change', () => {
+                if(selectedObject) {
+                    updateLabel(selectedObject);
+                    if(transformControl.dragging) applySnap(selectedObject);
+                }
+            });
+            scene.add(transformControl);
+
+            raycaster = new THREE.Raycaster();
+            pointer = new THREE.Vector2();
+            window.addEventListener('pointerdown', onPointerDown);
+            window.addEventListener('keydown', onKeyDown);
+            window.addEventListener('resize', onResize);
+
+            initGUI();
+            animate();
+        }
+
+        // --- 磁吸 ---
+        function applySnap(obj) {
+            const objBox = new THREE.Box3().setFromObject(obj);
+            const objSize = new THREE.Vector3(); objBox.getSize(objSize);
+            let newPos = obj.position.clone();
+            let snappedX = false, snappedZ = false;
+
+            wallsGroup.children.forEach(wall => {
+                const wallBox = new THREE.Box3().setFromObject(wall);
+                if (!snappedX) {
+                    if (Math.abs(objBox.min.x - wallBox.max.x) < SNAP_THRESHOLD) { newPos.x = wallBox.max.x + objSize.x/2; snappedX = true; }
+                    else if (Math.abs(objBox.max.x - wallBox.min.x) < SNAP_THRESHOLD) { newPos.x = wallBox.min.x - objSize.x/2; snappedX = true; }
+                }
+                if (!snappedZ) {
+                    if (Math.abs(objBox.min.z - wallBox.max.z) < SNAP_THRESHOLD) { newPos.z = wallBox.max.z + objSize.z/2; snappedZ = true; }
+                    else if (Math.abs(objBox.max.z - wallBox.min.z) < SNAP_THRESHOLD) { newPos.z = wallBox.min.z - objSize.z/2; snappedZ = true; }
+                }
+            });
+
+            if(snappedX) obj.position.x = newPos.x;
+            if(snappedZ) obj.position.z = newPos.z;
+            const status = document.getElementById('status');
+            if(snappedX || snappedZ) { status.innerText="吸附中!"; status.style.color="green"; }
+            else { status.innerText="移動中"; status.style.color="#666"; }
+        }
+
+        // --- 房間與物件 ---
+        function buildLShapeRoom(w1, l1, w2, l2) {
+            createFloor(w1, l1, 0, 0);
+            createFloor(w2, l2, -w1/2 + w2/2, l1/2 + l2/2);
+
+            const cw = 0xcccccc;
+            createWall("上牆", w1+20, WALL_H, 10, 0, -l1/2-5);
+            createWall("左長牆", 10, WALL_H, l1+l2, -w1/2-5, -l1/2+(l1+l2)/2);
+            createWall("右上牆", 10, WALL_H, l1, w1/2+5, 0);
+            createWall("右下牆", 10, WALL_H, l2, -w1/2+w2+5, l1/2+l2/2);
+            createWall("底牆", w2+20, WALL_H, 10, -w1/2+w2/2, l1/2+l2+5);
+            createWall("轉折牆", w1-w2, WALL_H, 10, (-w1/2+w2)+(w1-w2)/2, l1/2+5);
+            
+            orbit.target.set(0, 0, l1/2); orbit.update();
+        }
+
+        function createFloor(w, l, x, z) {
+            const m = new THREE.Mesh(new THREE.PlaneGeometry(w,l), new THREE.MeshStandardMaterial({color:0xffffff}));
+            m.rotation.x = -Math.PI/2; m.position.set(x, 0, z); m.receiveShadow = true; scene.add(m);
+        }
+
+        function createWall(n, w, h, d, x, z) {
+            const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshStandardMaterial({color:0xeeeeee, transparent:true, opacity:0.8}));
+            m.position.set(x, h/2, z); m.userData={isWall:true, name:n}; wallsGroup.add(m);
+        }
+
+        function createFurniture(n, w, h, d, c, t='furniture') {
+            const m = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshStandardMaterial({color: c, transparent:(t==='door'), opacity:(t==='door'?0.6:1)}));
+            m.scale.set(w,h,d); m.position.set(orbit.target.x, h/2, orbit.target.z);
+            m.castShadow=true; m.receiveShadow=true; m.userData={name:n, type:t, baseColor:c};
+            furnitureGroup.add(m); addLabel(m); selectObject(m); return m;
+        }
+
+        // --- 互動與 GUI ---
+        function onPointerDown(e) {
+            if(e.target.closest('.lil-gui') || e.target.closest('.modal-box') || e.target.closest('#toolbar')) return;
+            pointer.x = (e.clientX/window.innerWidth)*2-1; pointer.y = -(e.clientY/window.innerHeight)*2+1;
+            raycaster.setFromCamera(pointer, camera);
+            const hits = raycaster.intersectObjects(furnitureGroup.children);
+            if(hits.length>0) selectObject(hits[0].object);
+            else deselect();
+        }
+
+        function selectObject(m) {
+            selectedObject = m; transformControl.attach(m); m.material.emissive.setHex(0x555555);
+            rebuildGUI(m); document.getElementById('status').innerText=`選取: ${m.userData.name}`;
+        }
+        function deselect() {
+            if(selectedObject) selectedObject.material.emissive.setHex(0);
+            selectedObject=null; transformControl.detach();
+            if(guiFolder){guiFolder.destroy(); guiFolder=null;}
+            document.getElementById('status').innerText="準備就緒";
+        }
+
+        function initGUI() {
+            gui = new GUI({title:'控制面板'});
+            const f = gui.addFolder('➕ 新增物件');
+            f.add({fn:()=>createFurniture("桌子", 120,75,60, 0x5F9EA0)}, 'fn').name('新增 桌子');
+            f.add({fn:()=>createFurniture("櫃子", 60,100,60, 0xCD5C5C)}, 'fn').name('新增 櫃子');
+            f.add({fn:()=>createFurniture("門", 10,200,100, 0xff0000, 'door')}, 'fn').name('新增 門');
+        }
+        function rebuildGUI(m) {
+            if(guiFolder) guiFolder.destroy(); guiFolder=gui.addFolder(`✏️ ${m.userData.name}`);
+            const p = { w:m.scale.x, h:m.scale.y, d:m.scale.z, r:m.rotation.y*(180/Math.PI), del:()=>{furnitureGroup.remove(m); deselect();} };
+            guiFolder.add(p,'w',5,500).name('寬').onChange(v=>{m.scale.x=v; updateLabel(m)});
+            guiFolder.add(p,'h',5,300).name('高').onChange(v=>{m.scale.y=v; m.position.y=v/2; updateLabel(m)});
+            guiFolder.add(p,'d',5,500).name('深').onChange(v=>{m.scale.z=v; updateLabel(m)});
+            guiFolder.add(p,'r',-180,180).name('轉').onChange(v=>m.rotation.y=v*(Math.PI/180));
+            guiFolder.add(p,'del').name('❌ 刪除');
+        }
+
+        function addLabel(m) {
+            const c=document.createElement('canvas'); c.width=256; c.height=128; m.userData.ctx=c.getContext('2d');
+            const s=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c)}));
+            m.add(s); m.userData.sprite=s; updateLabel(m);
+        }
+        function updateLabel(m) {
+            const ctx=m.userData.ctx; ctx.clearRect(0,0,256,128);
+            ctx.fillStyle=m.userData.type==='door'?"rgba(200,0,0,0.7)":"rgba(0,0,0,0.6)";
+            ctx.roundRect(28,20,200,88,10); ctx.fill();
+            ctx.fillStyle="#fff"; ctx.font="bold 30px Arial"; ctx.textAlign="center"; ctx.textBaseline="middle";
+            ctx.fillText(m.userData.name,128,50);
+            ctx.font="24px Arial"; ctx.fillStyle="#ddd"; 
+            ctx.fillText(`${Math.round(m.scale.x)}x${Math.round(m.scale.z)}`,128,85);
+            m.userData.sprite.material.map.needsUpdate=true;
+            if(m.scale.x>0) m.userData.sprite.scale.set(100/m.scale.x, 50/m.scale.y, 1);
+            m.userData.sprite.position.y=0.6+(10/m.scale.y);
+        }
+
+        // --- 核心：存取系統 ---
+        function getSceneData() {
+            const data = [];
+            furnitureGroup.children.forEach(o => {
+                data.push({
+                    name:o.userData.name, type:o.userData.type, color:o.userData.baseColor,
+                    s:{x:o.scale.x, y:o.scale.y, z:o.scale.z},
+                    p:{x:o.position.x, y:o.position.y, z:o.position.z},
+                    r:{x:o.rotation.x, y:o.rotation.y, z:o.rotation.z}
+                });
+            });
+            return JSON.stringify(data);
+        }
+
+        function loadSceneData(jsonStr) {
+            try {
+                const data = JSON.parse(jsonStr);
+                while(furnitureGroup.children.length>0) furnitureGroup.remove(furnitureGroup.children[0]);
+                data.forEach(d => {
+                    const m = createFurniture(d.name, d.s.x, d.s.y, d.s.z, d.color, d.type);
+                    m.position.set(d.p.x, d.p.y, d.p.z); m.rotation.set(d.r.x, d.r.y, d.r.z);
+                });
+                alert("讀取成功！");
+                document.getElementById('code-modal').style.display = 'none';
+                document.getElementById('wizard-overlay').style.display = 'none';
+            } catch(e) { alert("代碼格式錯誤！"); }
+        }
+
+        // 1. 檔案下載
+        function saveSceneFile() {
+            const blob = new Blob([getSceneData()], {type:'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href=url; a.download='space_design.json'; a.click();
+        }
+        function loadFromFile(e) {
+            const f = e.target.files[0]; if(!f) return;
+            const r = new FileReader();
+            r.onload = (ev) => loadSceneData(ev.target.result);
+            r.readAsText(f);
+        }
+
+        // 2. 代碼文字操作
+        function showExportModal() {
+            document.getElementById('code-modal').style.display = 'flex';
+            document.getElementById('modal-title').innerText = "匯出代碼 (複製下方文字)";
+            document.getElementById('code-area').value = getSceneData();
+            document.getElementById('copy-btn').style.display = 'block';
+            document.getElementById('load-btn').style.display = 'none';
+        }
+        function showImportModal() {
+            document.getElementById('code-modal').style.display = 'flex';
+            document.getElementById('modal-title').innerText = "匯入代碼 (貼在下方)";
+            document.getElementById('code-area').value = "";
+            document.getElementById('copy-btn').style.display = 'none';
+            document.getElementById('load-btn').style.display = 'block';
+        }
+        function closeCodeModal() { document.getElementById('code-modal').style.display = 'none'; }
+        function copyCode() {
+            const t = document.getElementById('code-area'); t.select();
+            document.execCommand('copy'); alert("已複製到剪貼簿！請自行保存。");
+        }
+        function loadFromText() { loadSceneData(document.getElementById('code-area').value); }
+
+        function onResize() { camera.aspect=window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth,window.innerHeight); }
+        function onKeyDown(e){if(e.key==='Delete')if(selectedObject){furnitureGroup.remove(selectedObject); deselect();}}
+        function animate() { requestAnimationFrame(animate); renderer.render(scene, camera); }
+    </script>
+</body>
+</html>
